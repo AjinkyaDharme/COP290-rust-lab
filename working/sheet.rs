@@ -14,12 +14,20 @@ pub struct Spreadsheet {
     rows: usize,
     cols: usize,
     cells: Vec<CellValue>,
+    scroll_row: usize,
+    scroll_col: usize,
 }
+
 
 impl Spreadsheet {
     pub fn new(rows: usize, cols: usize) -> Self {
         let cells = vec![CellValue::default(); rows * cols];
-        Self { rows, cols, cells }
+        Self { 
+            rows, 
+            cols, 
+            cells,
+            scroll_row: 0,
+            scroll_col: 0, }
     }
 
     fn index(&self, row: usize, col: usize) -> Option<usize> {
@@ -70,7 +78,6 @@ impl Spreadsheet {
             println!();
         }
     }
-
 }
 
 
@@ -86,3 +93,50 @@ fn convert_to_column_name(mut col: u16) -> String {
     }
     name
 }
+
+
+pub fn scroll_spreadsheet(&mut self, direction: char) -> Result<(), String> {
+    match direction {
+        'w' => {
+            if self.scroll_row >= 10 {
+                self.scroll_row -= 10;
+            } else {
+                self.scroll_row = 0;
+            }
+        }
+        's' => {
+            if self.scroll_row + 10 < self.rows {
+                self.scroll_row += 10;
+            }
+        }
+        'a' => {
+            if self.scroll_col >= 10 {
+                self.scroll_col -= 10;
+            } else {
+                self.scroll_col = 0;
+            }
+        }
+        'd' => {
+            if self.scroll_col + 10 < self.cols {
+                self.scroll_col += 10;
+            }
+        }
+        _ => return Err("Invalid direction".to_string()),
+    }
+    Ok(())
+}
+
+pub fn scroll_to(&mut self, cell: &str) -> Result<(), String> {
+    if let Some((row, col)) = Spreadsheet::cell_string_to_indices(cell) {
+        if row < self.rows && col < self.cols {
+            self.scroll_row = row;
+            self.scroll_col = col;
+            Ok(())
+        } else {
+            Err("Cell reference out of bounds".to_string())
+        }
+    } else {
+        Err("Invalid cell reference format".to_string())
+    }
+}
+
