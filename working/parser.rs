@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, digit1, multispace0},
-    combinator::{map, map_res, peek},
+    combinator::{map, map_res, peek,all_consuming},
     error::{ParseError, VerboseError},
     multi::fold_many0,
     sequence::{delimited, preceded, tuple},
@@ -13,15 +13,18 @@ use crate::command::{BinaryOp, CellRef, Command, Expr, Function};
 
 
 pub fn parse_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
-    alt((
-        parse_quit,
-        parse_disable_output,
-        parse_enable_output,
-        parse_scroll_to,
-        parse_scroll_single,
-        parse_formula_command,
-    ))(input)
+    all_consuming(
+        alt((
+            parse_quit,
+            parse_disable_output,
+            parse_enable_output,
+            parse_scroll_to,
+            parse_scroll_single,
+            parse_formula_command,
+        ))
+    )(input)
 }
+
 
 fn parse_quit(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     map(tag("q"), |_| Command::Quit)(input)
