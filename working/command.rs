@@ -23,7 +23,9 @@ pub enum Expr {
     CellRef(CellRef),
     BinaryOp(Box<Expr>, BinaryOp, Box<Expr>),
     FunctionCall(Function, Box<Expr>),
+    Range(CellRef, CellRef), 
 }
+
 
 #[derive(Debug, Clone)]
 pub enum BinaryOp {
