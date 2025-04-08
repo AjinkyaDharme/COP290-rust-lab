@@ -79,36 +79,38 @@ impl Spreadsheet {
     }
 
     pub fn scroll_spreadsheet(&mut self, direction: char) -> Result<(), String> {
+        
+        let display_rows = 10;
+        let display_cols = 10;
+    
         match direction {
             'w' => {
-                if self.scroll_row >= 10 {
-                    self.scroll_row -= 10;
+                if self.scroll_row >= display_rows {
+                    self.scroll_row -= display_rows;
                 } else {
                     self.scroll_row = 0;
                 }
             }
             's' => {
-                if self.scroll_row + 10 < self.rows {
-                    self.scroll_row += 10;
-                }
+                self.scroll_row = (self.scroll_row + display_rows)
+                    .min(self.rows.saturating_sub(display_rows));
             }
             'a' => {
-                if self.scroll_col >= 10 {
-                    self.scroll_col -= 10;
+                if self.scroll_col >= display_cols {
+                    self.scroll_col -= display_cols;
                 } else {
                     self.scroll_col = 0;
                 }
             }
             'd' => {
-                if self.scroll_col + 10 < self.cols {
-                    self.scroll_col += 10;
-                }
+                self.scroll_col = (self.scroll_col + display_cols)
+                    .min(self.cols.saturating_sub(display_cols));
             }
             _ => return Err("Invalid direction".to_string()),
         }
         Ok(())
     }
-
+    
     pub fn scroll_to(&mut self, cell: &str) -> Result<(), String> {
         if let Some((row, col)) = Spreadsheet::cell_string_to_indices(cell) {
             if row < self.rows && col < self.cols {
