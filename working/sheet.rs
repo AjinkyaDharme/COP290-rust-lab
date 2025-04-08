@@ -11,13 +11,12 @@ impl Default for CellValue {
 }
 
 pub struct Spreadsheet {
-    rows: usize,
-    cols: usize,
-    cells: Vec<CellValue>,
-    scroll_row: usize,
-    scroll_col: usize,
+   pub rows: usize,
+   pub cols: usize,
+   pub cells: Vec<CellValue>,
+   pub scroll_row: usize,
+   pub scroll_col: usize,
 }
-
 
 impl Spreadsheet {
     pub fn new(rows: usize, cols: usize) -> Self {
@@ -59,7 +58,7 @@ impl Spreadsheet {
         // Print column headers (A, B, C, ...)
         print!("\t");
         for col in start_col..end_col {
-            print!("{}\t", convert_to_column_name(col as u16));
+            print!("{}\t", Spreadsheet::convert_to_column_name(col as u16));
         }
         println!();
 
@@ -78,65 +77,95 @@ impl Spreadsheet {
             println!();
         }
     }
-}
 
-
-fn convert_to_column_name(mut col: u16) -> String {
-    let mut name = String::new();
-    loop {
-        let rem = col % 26;
-        name.insert(0, (b'A' + rem as u8) as char);
-        if col < 26 {
-            break;
+    pub fn scroll_spreadsheet(&mut self, direction: char) -> Result<(), String> {
+        match direction {
+            'w' => {
+                if self.scroll_row >= 10 {
+                    self.scroll_row -= 10;
+                } else {
+                    self.scroll_row = 0;
+                }
+            }
+            's' => {
+                if self.scroll_row + 10 < self.rows {
+                    self.scroll_row += 10;
+                }
+            }
+            'a' => {
+                if self.scroll_col >= 10 {
+                    self.scroll_col -= 10;
+                } else {
+                    self.scroll_col = 0;
+                }
+            }
+            'd' => {
+                if self.scroll_col + 10 < self.cols {
+                    self.scroll_col += 10;
+                }
+            }
+            _ => return Err("Invalid direction".to_string()),
         }
-        col = (col / 26) - 1;
+        Ok(())
     }
-    name
-}
 
-
-pub fn scroll_spreadsheet(&mut self, direction: char) -> Result<(), String> {
-    match direction {
-        'w' => {
-            if self.scroll_row >= 10 {
-                self.scroll_row -= 10;
+    pub fn scroll_to(&mut self, cell: &str) -> Result<(), String> {
+        if let Some((row, col)) = Spreadsheet::cell_string_to_indices(cell) {
+            if row < self.rows && col < self.cols {
+                self.scroll_row = row;
+                self.scroll_col = col;
+                Ok(())
             } else {
-                self.scroll_row = 0;
+                Err("Cell reference out of bounds".to_string())
             }
-        }
-        's' => {
-            if self.scroll_row + 10 < self.rows {
-                self.scroll_row += 10;
-            }
-        }
-        'a' => {
-            if self.scroll_col >= 10 {
-                self.scroll_col -= 10;
-            } else {
-                self.scroll_col = 0;
-            }
-        }
-        'd' => {
-            if self.scroll_col + 10 < self.cols {
-                self.scroll_col += 10;
-            }
-        }
-        _ => return Err("Invalid direction".to_string()),
-    }
-    Ok(())
-}
-
-pub fn scroll_to(&mut self, cell: &str) -> Result<(), String> {
-    if let Some((row, col)) = Spreadsheet::cell_string_to_indices(cell) {
-        if row < self.rows && col < self.cols {
-            self.scroll_row = row;
-            self.scroll_col = col;
-            Ok(())
         } else {
-            Err("Cell reference out of bounds".to_string())
+            Err("Invalid cell reference format".to_string())
         }
-    } else {
-        Err("Invalid cell reference format".to_string())
+    }
+
+    pub fn cell_string_to_indices(cell: &str) -> Option<(usize, usize)> {
+        if cell.is_empty() || !cell.chars().next()?.is_alphabetic() {
+            return None;
+        }
+    
+        let mut col = 0usize;
+        let mut i = 0;
+        let chars: Vec<char> = cell.chars().collect();
+    
+        while i < chars.len() && chars[i].is_alphabetic() {
+            col = col * 26 + (chars[i].to_ascii_uppercase() as usize - 'A' as usize + 1);
+            i += 1;
+        }
+    
+        if col == 0 || i == chars.len() || !chars[i].is_ascii_digit() {
+            return None;
+        }
+    
+        let mut row = 0usize;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            row = row * 10 + (chars[i] as usize - '0' as usize);
+            i += 1;
+        }
+    
+        if i != chars.len() {
+            return None;
+        }
+    
+        Some((row - 1, col - 1)) 
+    }
+     
+    
+    fn convert_to_column_name(mut col: u16) -> String {
+        let mut name = String::new();
+        loop {
+            let rem = col % 26;
+            name.insert(0, (b'A' + rem as u8) as char);
+            if col < 26 {
+                break;
+            }
+            col = (col / 26) - 1;
+        }
+        name
     }
 }
 
