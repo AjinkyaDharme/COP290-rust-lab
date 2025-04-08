@@ -150,7 +150,7 @@ fn parse_function_call(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     let (input, func_name) = alpha1(input)?;
     let (input, _) = peek(tag("("))(input)?;
     let (input, _) = tag("(")(input)?;
-    let (input, arg) = parse_expr(input)?;
+    let (input, arg) = alt((parse_range, parse_expr))(input)?;
     let (input, _) = tag(")")(input)?;
     let function = match func_name.to_uppercase().as_str() {
         "MIN" => Function::Min,
@@ -169,6 +169,7 @@ fn parse_function_call(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     Ok((input, Expr::FunctionCall(function, Box::new(arg))))
 }
 
+
 fn parse_constant(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     map_res(
         digit1,
@@ -180,4 +181,11 @@ fn parse_constant(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 
 fn parse_cell_ref_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     map(parse_cell_ref, |cell| Expr::CellRef(cell))(input)
+}
+
+fn parse_range(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+    let (input, start) = parse_cell_ref(input)?;
+    let (input, _) = tag(":")(input)?;
+    let (input, end) = parse_cell_ref(input)?;
+    Ok((input, Expr::Range(start, end)))
 }
