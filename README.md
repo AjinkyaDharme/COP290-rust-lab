@@ -10,4 +10,6 @@ cd spreadsheet/
 cd src/
 
 # Run the application
+cargo run
+
 # Creates 999 X 18278 spreadsheet
