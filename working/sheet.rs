@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub enum CellValue {
     Value(i32),
@@ -14,6 +16,7 @@ pub struct Spreadsheet {
    pub rows: usize,
    pub cols: usize,
    pub cells: Vec<CellValue>,
+   pub formulas: HashMap<String, crate::command::Expr>,
    pub scroll_row: usize,
    pub scroll_col: usize,
 }
@@ -25,8 +28,57 @@ impl Spreadsheet {
             rows, 
             cols, 
             cells,
+            formulas: HashMap::new(),
             scroll_row: 0,
             scroll_col: 0, }
+    }
+
+
+    pub fn get_formula(&self, key: &str) -> Option<&crate::command::Expr> {
+        self.formulas.get(key)
+    }
+
+
+    pub fn set_formula(&mut self, key: &str, expr: crate::command::Expr) {
+        self.formulas.insert(key.to_string(), expr);
+    }
+
+    /// Updates a cell’s value based on its key.
+    /// This function computes the index from the key (e.g., "A1") and updates that cell.
+    pub fn set_by_key(&mut self, key: &str, value: CellValue) -> Result<(), String> {
+        let (row, col) = Self::cell_key_to_index(key)?;
+        let idx = row * self.cols + col;
+        if idx < self.cells.len() {
+            self.cells[idx] = value;
+            Ok(())
+        } else {
+            Err(format!("Cell {} is out of bounds", key))
+        }
+    }
+
+    /// Helper: converts a cell key like "A1" to 0-based row and col indices.
+    pub fn cell_key_to_index(key: &str) -> Result<(usize, usize), String> {
+        // Split the key into the column letters and the row number.
+        let mut col_part = String::new();
+        let mut row_part = String::new();
+        for ch in key.chars() {
+            if ch.is_ascii_alphabetic() {
+                col_part.push(ch);
+            } else if ch.is_ascii_digit() {
+                row_part.push(ch);
+            } else {
+                return Err(format!("Invalid character in cell key: {}", ch));
+            }
+        }
+        if col_part.is_empty() || row_part.is_empty() {
+            return Err(format!("Invalid cell key format: {}", key));
+        }
+        let mut col = 0;
+        for ch in col_part.chars() {
+            col = col * 26 + (ch.to_ascii_uppercase() as usize) - ('A' as usize) + 1;
+        }
+        let row: usize = row_part.parse::<usize>().map_err(|_| format!("Invalid row in cell key: {}", key))? - 1;
+        Ok((row, col - 1))
     }
 
     fn index(&self, row: usize, col: usize) -> Option<usize> {
