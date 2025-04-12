@@ -1,4 +1,5 @@
 use nom::{
+    combinator::opt,
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, digit1, multispace0},
@@ -174,12 +175,13 @@ fn parse_function_call(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 
 
 fn parse_constant(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
-    map_res(
-        digit1,
-        |digit_str: &str| {
-            digit_str.parse::<i32>().map(Expr::Constant)
-        }
-    )(input)
+    let (input, sign) = opt(tag("-"))(input)?;
+    let (input, digit_str) = digit1(input)?;
+    let number = digit_str.parse::<i32>().map_err(|_| {
+        nom::Err::Failure(VerboseError::from_error_kind(input, nom::error::ErrorKind::Digit))
+    })?;
+    let value = if sign.is_some() { -number } else { number };
+    Ok((input, Expr::Constant(value)))
 }
 
 fn parse_cell_ref_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
