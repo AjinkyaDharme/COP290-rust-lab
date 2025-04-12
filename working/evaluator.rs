@@ -1,0 +1,206 @@
+use std::thread::sleep;
+use std::time::Duration;
+
+use crate::command::{BinaryOp, CellRef, Command, Expr, Function};
+use crate::sheet::{CellValue, Spreadsheet};
+use crate::recalculation;
+
+#[derive(Debug)]
+pub enum EvalError {
+    DivByZero,
+    CellError,         // referencing a cell with an existing error
+    OutOfBounds,       // cell reference outside sheet
+    Other(String),     // any other error
+}
+
+impl std::fmt::Display for EvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalError::DivByZero => write!(f, "Division by zero"),
+            EvalError::CellError => write!(f, "Referenced cell error"),
+            EvalError::OutOfBounds => write!(f, "Cell reference out of bounds"),
+            EvalError::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+
+pub fn eval_expr(expr: &Expr, sheet: &Spreadsheet) -> Result<i32, EvalError> {
+    match expr {
+        Expr::Constant(v) => Ok(*v),
+        Expr::CellRef(CellRef { row, col }) => {
+            
+            let r = (*row as usize).saturating_sub(1);
+            let c = (*col as usize).saturating_sub(1);
+            match sheet.get(r, c) {
+                Some(CellValue::Value(v)) => Ok(*v),
+                Some(CellValue::Error(_)) => Err(EvalError::CellError),
+                None => Err(EvalError::OutOfBounds),
+            }
+        }
+        Expr::BinaryOp(lhs, op, rhs) => {
+            let l = eval_expr(lhs, sheet)?;
+            let r = eval_expr(rhs, sheet)?;
+            match op {
+                BinaryOp::Add => Ok(l + r),
+                BinaryOp::Subtract => Ok(l - r),
+                BinaryOp::Multiply => Ok(l * r),
+                BinaryOp::Divide => {
+                    if r == 0 {
+                        Err(EvalError::DivByZero)
+                    } else {
+                        Ok(l / r)
+                    }
+                }
+            }
+        }
+        Expr::FunctionCall(func, arg) => {
+            match func {
+                
+                Function::Sleep => {
+                    let v = eval_expr(arg, sheet)?;
+                    sleep(Duration::from_secs(v as u64));
+                    Ok(v)
+                }
+                
+                Function::Sum 
+                | Function::Min 
+                | Function::Max 
+                | Function::Avg 
+                | Function::Stdev => {
+                    match &**arg {
+                        Expr::Range(start, end) => {
+                            if start.row > end.row || start.col > end.col {
+                                return Err(EvalError::Other("Invalid range".into()));
+                            }
+                
+                            let start_row = (start.row - 1) as usize;
+                            let end_row = (end.row - 1) as usize;
+                            let start_col = (start.col - 1) as usize;
+                            let end_col = (end.col - 1) as usize;
+                            let mut values = Vec::new();
+                
+                            // Iterate over the range and collect cell values.
+                            for r in start_row..=end_row {
+                                for c in start_col..=end_col {
+                                    match sheet.get(r, c) {
+                                        Some(CellValue::Value(v)) => values.push(*v),
+                                        Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                        None => return Err(EvalError::OutOfBounds),
+                                    }
+                                }
+                            }
+                            let n = values.len();
+                            // If there is 0 or only one cell in the range, return 0
+                            if n <= 1 {
+                                return Ok(0);
+                            }
+                            let sum: i32 = values.iter().sum();
+                            let mean = sum as f64 / n as f64;
+                
+                            // Calculate variance as the average of squared differences from the mean.
+                            let variance: f64 = values.iter()
+                                .map(|v| {
+                                    let diff = *v as f64 - mean;
+                                    diff * diff
+                                })
+                                .sum::<f64>() / n as f64;
+                
+                            // Take the square root of the variance and round to the nearest integer.
+                            Ok(variance.sqrt().round() as i32)
+                        }
+                        _ => Err(EvalError::Other(format!(
+                            "Function {:?} requires a range argument",
+                            func
+                        ))),
+                    }
+                }                
+                // Unhandled functions
+                _ => Err(EvalError::Other(format!("Function {:?} not implemented", func))),
+            }
+        }
+        Expr::Range(_, _) => Err(EvalError::Other("Cannot evaluate a range by itself".into())),
+    }
+}
+
+
+pub fn evaluate_command(
+    cmd: Command,
+    sheet: &mut Spreadsheet,
+    output_enabled: &mut bool,
+) -> Result<(), EvalError> {
+    match cmd {
+        Command::SetCell { cell, expr } => {
+        let key = recalculation::cell_to_string(&cell);
+        sheet.set_formula(&key, expr.clone());
+        
+            match eval_expr(&expr, sheet) {
+                Ok(v) => {
+                    sheet.set(
+                        (cell.row as usize) - 1,
+                        (cell.col as usize) - 1,
+                        CellValue::Value(v),
+                    ).map_err(|e| EvalError::Other(e))?;
+                }
+                Err(EvalError::DivByZero) => {
+                    sheet.set(
+                        (cell.row as usize) - 1,
+                        (cell.col as usize) - 1,
+                        CellValue::Error("ERR".into()),
+                    ).map_err(|e| EvalError::Other(e))?;
+                }
+                Err(EvalError::CellError) => {
+                    sheet.set(
+                        (cell.row as usize) - 1,
+                        (cell.col as usize) - 1,
+                        CellValue::Error("ERR".into()),
+                    ).map_err(|e| EvalError::Other(e))?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    // Handle any other errors by marking the cell as error and propagating the error.
+                    sheet.set(
+                        (cell.row as usize) - 1,
+                        (cell.col as usize) - 1,
+                        CellValue::Error("ERR".into()),
+                    ).map_err(|e| EvalError::Other(e))?;
+                    return Err(e);
+                }
+            }
+        }
+        
+        Command::ScrollUp => {
+            sheet.scroll_spreadsheet('w').map_err(|e| EvalError::Other(e))?;
+        }
+        Command::ScrollDown => {
+            sheet.scroll_spreadsheet('s').map_err(|e| EvalError::Other(e))?;
+        }
+        Command::ScrollLeft => {
+            sheet.scroll_spreadsheet('a').map_err(|e| EvalError::Other(e))?;
+        }
+        Command::ScrollRight => {
+            sheet.scroll_spreadsheet('d').map_err(|e| EvalError::Other(e))?;
+        }
+        Command::ScrollTo(cell) => {
+            let cell_str = format!("{}{}", convert_col_to_name(cell.col), cell.row);
+            sheet.scroll_to(&cell_str).map_err(|e| EvalError::Other(e))?;
+        }
+        Command::DisableOutput => { *output_enabled = false; },
+        Command::EnableOutput => { *output_enabled = true; },
+        Command::Quit => {
+            // handled in main loop.
+        }
+    }
+    Ok(())
+}
+
+/// Helper: convert a 1-based column index to its column name (e.g., 1 -> A, 27 -> AA).
+fn convert_col_to_name(mut col: u32) -> String {
+    let mut name = String::new();
+    while col > 0 {
+        let rem = ((col - 1) % 26) as u8;
+        name.insert(0, (b'A' + rem) as char);
+        col = (col - 1) / 26;
+    }
+    name
+}
