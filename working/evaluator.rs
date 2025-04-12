@@ -70,17 +70,16 @@ pub fn eval_expr(expr: &Expr, sheet: &Spreadsheet) -> Result<i32, EvalError> {
                 | Function::Stdev => {
                     match &**arg {
                         Expr::Range(start, end) => {
+                            
                             if start.row > end.row || start.col > end.col {
                                 return Err(EvalError::Other("Invalid range".into()));
                             }
-                
+                            
                             let start_row = (start.row - 1) as usize;
                             let end_row = (end.row - 1) as usize;
                             let start_col = (start.col - 1) as usize;
                             let end_col = (end.col - 1) as usize;
                             let mut values = Vec::new();
-                
-                            // Iterate over the range and collect cell values.
                             for r in start_row..=end_row {
                                 for c in start_col..=end_col {
                                     match sheet.get(r, c) {
@@ -90,31 +89,40 @@ pub fn eval_expr(expr: &Expr, sheet: &Spreadsheet) -> Result<i32, EvalError> {
                                     }
                                 }
                             }
-                            let n = values.len();
-                            // If there is 0 or only one cell in the range, return 0
-                            if n <= 1 {
-                                return Ok(0);
+                            if values.is_empty() {
+                                return Err(EvalError::Other("Empty range".into()));
                             }
-                            let sum: i32 = values.iter().sum();
-                            let mean = sum as f64 / n as f64;
-                
-                            // Calculate variance as the average of squared differences from the mean.
-                            let variance: f64 = values.iter()
-                                .map(|v| {
-                                    let diff = *v as f64 - mean;
-                                    diff * diff
-                                })
-                                .sum::<f64>() / n as f64;
-                
-                            // Take the square root of the variance and round to the nearest integer.
-                            Ok(variance.sqrt().round() as i32)
+                            match func {
+                                Function::Sum => Ok(values.iter().sum()),
+                                Function::Min => values.into_iter().min().ok_or_else(|| EvalError::Other("Empty range".into())),
+                                Function::Max => values.into_iter().max().ok_or_else(|| EvalError::Other("Empty range".into())),
+                                Function::Avg => {
+                                    let sum: i32 = values.iter().sum();
+                                    Ok(sum / (values.len() as i32))
+                                },
+                                Function::Stdev => {
+                                    let n = values.len();
+                                    if n <= 1 {
+                                        return Ok(0); 
+                                    }
+                                    
+                                    let sum: i64 = values.iter().map(|&v| v as i64).sum();
+                                    let sum_of_squares: i64 = values.iter()
+                                        .map(|&v| (v as i64) * (v as i64))
+                                        .sum();
+                                    
+                                    let n_f64 = n as f64;
+                                    let variance = ((n_f64 * sum_of_squares as f64) - (sum as f64 * sum as f64)) / (n_f64 * n_f64);
+                                    let std_dev = variance.sqrt();
+                                    
+                                    Ok(std_dev.round() as i32)
+                                },
+                                _ => Err(EvalError::Other(format!("Function {:?} not implemented for range", func))),
+                            }
                         }
-                        _ => Err(EvalError::Other(format!(
-                            "Function {:?} requires a range argument",
-                            func
-                        ))),
+                        _ => Err(EvalError::Other(format!("Function {:?} requires a range argument", func))),
                     }
-                }                
+                }
                 // Unhandled functions
                 _ => Err(EvalError::Other(format!("Function {:?} not implemented", func))),
             }
