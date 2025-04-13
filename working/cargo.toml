@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 nom = "7"
 memory-stats = "1.0"
-
+eframe = "0.23"
+egui = "0.23"  
