@@ -209,7 +209,7 @@ impl Spreadsheet {
     }
      
     
-    fn convert_to_column_name(mut col: u16) -> String {
+    pub fn convert_to_column_name(mut col: u16) -> String {
         let mut name = String::new();
         loop {
             let rem = col % 26;
@@ -222,4 +222,3 @@ impl Spreadsheet {
         name
     }
 }
-
