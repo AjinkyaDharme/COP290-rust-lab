@@ -1,4 +1,9 @@
+use rodio::{OutputStream, Sink, Source, source::SineWave};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::thread;
+use std::time::Duration;
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum Condition {
@@ -38,6 +43,7 @@ impl Default for CellValue {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Spreadsheet {
     pub rows: usize,
     pub cols: usize,
@@ -47,6 +53,32 @@ pub struct Spreadsheet {
     pub scroll_col: usize,
     private_cells: HashSet<String>,
     pub formats: Vec<CellFormat>,
+}
+
+impl fmt::Display for Spreadsheet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // First row: column headers (A, B, C, ...)
+        write!(f, "{:>4}", "")?; // Space for row numbers
+        for col in 0..self.cols {
+            write!(f, "{:>10}", Self::convert_to_column_name((col) as u16))?;
+        }
+        writeln!(f)?;
+
+        // Data rows with row numbers
+        for row in 0..self.rows {
+            write!(f, "{:>4}", row + 1)?; // Row number
+            for col in 0..self.cols {
+                let cell_str = match self.get(row, col) {
+                    Some(CellValue::Value(v)) => v.to_string(),
+                    Some(CellValue::Error(_)) => "ERR".to_string(),
+                    None => "".to_string(),
+                };
+                write!(f, "{:>10}", cell_str)?;
+            }
+            writeln!(f)?;
+        }
+        Ok(())
+    }
 }
 
 impl Spreadsheet {
@@ -62,6 +94,20 @@ impl Spreadsheet {
             private_cells: HashSet::new(),
             formats: Vec::new(),
         }
+    }
+
+    fn beep() {
+        // Spawn a new thread so the code can continue running in the background.
+        thread::spawn(|| {
+            if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
+                if let Ok(sink) = Sink::try_new(&stream_handle) {
+                    // Create a 440 Hz sine wave that lasts 3 seconds.
+                    let beep = SineWave::new(440.0).take_duration(Duration::from_secs(3));
+                    sink.append(beep);
+                    sink.sleep_until_end();
+                }
+            }
+        });
     }
 
     pub fn clear_formats(&mut self) {
@@ -158,7 +204,7 @@ impl Spreadsheet {
     pub fn set_by_key(&mut self, key: &str, value: CellValue) -> Result<(), String> {
         let (row, col) = Self::cell_key_to_index(key)?;
         let idx = row * self.cols + col;
-        if idx < self.cells.len() {
+        if idx < self.cells.len() && row < self.rows && col < self.cols {
             self.cells[idx] = value;
             Ok(())
         } else {
@@ -299,6 +345,7 @@ impl Spreadsheet {
                 self.scroll_col = col;
                 Ok(())
             } else {
+                Spreadsheet::beep();
                 Err("Cell reference out of bounds".to_string())
             }
         } else {
@@ -337,7 +384,7 @@ impl Spreadsheet {
         Some((row - 1, col - 1))
     }
 
-    fn convert_to_column_name(mut col: u16) -> String {
+    pub fn convert_to_column_name(mut col: u16) -> String {
         let mut name = String::new();
         loop {
             let rem = col % 26;
@@ -348,6 +395,116 @@ impl Spreadsheet {
             col = (col / 26) - 1;
         }
         name
+    }
+
+
+    /// Get cells that this cell depends on (used in formulas)
+    // Returns all cells directly referenced in the formula of (row, col)
+    fn get_direct_precedents(&self, row: usize, col: usize) -> Vec<(usize, usize)> {
+        let key = format!("{}{}", Self::convert_to_column_name(col as u16), row + 1);
+        if let Some(expr) = self.formulas.get(&key) {
+            let mut refs = Vec::new();
+            Self::collect_cell_references(expr, &mut refs);
+            refs
+        } else {
+            Vec::new()
+        }
+    }
+
+    // Returns all cells that directly depend on (row, col)
+    fn get_direct_dependents(&self, row: usize, col: usize) -> Vec<(usize, usize)> {
+        let mut dependents = Vec::new();
+        for (key, expr) in &self.formulas {
+            let mut refs = Vec::new();
+            Self::collect_cell_references(expr, &mut refs);
+            if refs.contains(&(row, col)) {
+                if let Ok((r, c)) = Self::cell_key_to_index(key) {
+                    dependents.push((r, c));
+                }
+            }
+        }
+        dependents
+    }
+
+    pub fn get_all_precedents(&self, row: usize, col: usize) -> Vec<(usize, usize)> {
+        let mut visited = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        self.collect_all_precedents(row, col, &mut visited, &mut result);
+        result
+    }
+
+    fn collect_all_precedents(
+        &self,
+        row: usize,
+        col: usize,
+        visited: &mut std::collections::HashSet<(usize, usize)>,
+        result: &mut Vec<(usize, usize)>,
+    ) {
+        if !visited.insert((row, col)) {
+            return; // already visited
+        }
+        let direct = self.get_direct_precedents(row, col);
+        for &(r, c) in &direct {
+            result.push((r, c)); // Always add direct precedent
+            self.collect_all_precedents(r, c, visited, result);
+        }
+    }
+
+    fn collect_cell_references(expr: &crate::command::Expr, out: &mut Vec<(usize, usize)>) {
+        use crate::command::Expr;
+        match expr {
+            Expr::CellRef(cell) => {
+                // Convert 1-based cell reference to 0-based indices
+                out.push(((cell.row - 1) as usize, (cell.col - 1) as usize));
+            }
+            Expr::BinaryOp(left, _op, right) => {
+                Self::collect_cell_references(left, out);
+                Self::collect_cell_references(right, out);
+            }
+            Expr::FunctionCall(_, args) => {
+                // Recursively collect references from function arguments
+                for arg in args {
+                    Self::collect_cell_references(arg, out);
+                }
+            }
+            Expr::Range(start, end) => {
+                let row_start = (start.row - 1) as usize;
+                let col_start = (start.col - 1) as usize;
+                let row_end = (end.row - 1) as usize;
+                let col_end = (end.col - 1) as usize;
+                for r in row_start.min(row_end)..=row_start.max(row_end) {
+                    for c in col_start.min(col_end)..=col_start.max(col_end) {
+                        out.push((r, c));
+                    }
+                }
+            }
+
+            Expr::Constant(_) => {}
+        }
+    }
+
+    pub fn get_all_dependents(&self, row: usize, col: usize) -> Vec<(usize, usize)> {
+        let mut visited = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        self.collect_all_dependents(row, col, &mut visited, &mut result);
+        result
+    }
+
+    fn collect_all_dependents(
+        &self,
+        row: usize,
+        col: usize,
+        visited: &mut std::collections::HashSet<(usize, usize)>,
+        result: &mut Vec<(usize, usize)>,
+    ) {
+        if !visited.insert((row, col)) {
+            return; // already visited
+        }
+        let direct = self.get_direct_dependents(row, col);
+        for &(r, c) in &direct {
+            result.push((r, c)); // Always add direct dependent
+            self.collect_all_dependents(r, c, visited, result);
+        }
     }
 }
 

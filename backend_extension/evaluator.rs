@@ -2,12 +2,14 @@ use crate::command::{BinaryOp, CellRef, Command, Expr, Function};
 use crate::recalculation;
 use crate::sheet::CellFormat;
 use crate::sheet::{CellValue, Spreadsheet};
+use plotters::prelude::*;
+use std::io::Read;
 use std::io::{Write, stdin, stdout};
 use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum EvalError {
     DivByZero,
     CellError,
@@ -55,6 +57,9 @@ pub fn eval_expr(expr: &Expr, sheet: &Spreadsheet) -> Result<i32, EvalError> {
                 BinaryOp::BitAnd => Ok(l & r),
                 BinaryOp::BitXor => Ok(l ^ r),
                 BinaryOp::BitOr => Ok(l | r),
+                BinaryOp::Equal => Ok((l == r) as i32),
+                BinaryOp::GreaterThan => Ok((l > r) as i32),
+                BinaryOp::LessThan => Ok((l < r) as i32),
             }
         }
         Expr::FunctionCall(func, args) => {
@@ -284,12 +289,227 @@ pub fn evaluate_command(
             let cell_str = format!("{}{}", convert_col_to_name(cell.col), cell.row);
             sheet.scroll_to(&cell_str).map_err(EvalError::Other)?;
         }
+        Command::Plot(expr) => {
+            match expr {
+                Expr::Range(start, end) => {
+                    let start_row = (start.row - 1) as usize;
+                    let end_row = (end.row - 1) as usize;
+                    let start_col = (start.col - 1) as usize;
+                    let end_col = (end.col - 1) as usize;
+                    println!(
+                        "Plotting range: {} {} {} {}",
+                        start_row, start_col, end_row, end_col
+                    );
+
+                    let mut points: Vec<(f32, f32)> = Vec::new();
+
+                    // Vertical range with exactly 2 columns (for instance, A1:B5)
+                    if end_col - start_col == 1 && end_row >= start_row {
+                        for r in start_row..=end_row {
+                            let x = match sheet.get(r, start_col) {
+                                Some(CellValue::Value(v)) => *v as f32,
+                                Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                None => return Err(EvalError::OutOfBounds),
+                            };
+                            let y = match sheet.get(r, start_col + 1) {
+                                Some(CellValue::Value(v)) => *v as f32,
+                                Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                None => return Err(EvalError::OutOfBounds),
+                            };
+                            points.push((x, y));
+                        }
+                    }
+                    // Horizontal range with exactly 2 rows (for instance, A1:E2)
+                    else if end_row - start_row == 1 && end_col >= start_col {
+                        for c in start_col..=end_col {
+                            let x = match sheet.get(start_row, c) {
+                                Some(CellValue::Value(v)) => *v as f32,
+                                Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                None => return Err(EvalError::OutOfBounds),
+                            };
+                            let y = match sheet.get(start_row + 1, c) {
+                                Some(CellValue::Value(v)) => *v as f32,
+                                Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                None => return Err(EvalError::OutOfBounds),
+                            };
+                            points.push((x, y));
+                        }
+                    } else {
+                        return Err(EvalError::Other(
+                            "Plot requires a range spanning exactly 2 rows or 2 columns".into(),
+                        ));
+                    }
+
+                    if points.len() < 2 {
+                        return Err(EvalError::Other("Plot needs at least 2 points".into()));
+                    }
+                    println!("Plotting points: {:?}", points);
+
+                    // Generate a detailed image of the plot via plotters.
+                    generate_plot_image(&points)?;
+                    println!("Plot image generated as 'plot.png'.");
+                    return Ok(());
+                }
+                _ => return Err(EvalError::Other("Plot requires a range argument".into())),
+            }
+        }
         Command::DisableOutput => {
             *output_enabled = false;
         }
         Command::EnableOutput => {
             *output_enabled = true;
         }
+        Command::Output(file) => {
+            let mut file = std::fs::File::create(file)
+                .map_err(|e| EvalError::Other(format!("Failed to create file: {}", e)))?;
+            writeln!(file, "{}", sheet)
+                .map_err(|e| EvalError::Other(format!("Failed to write to file: {}", e)))?;
+            //println!("Output written to {}", file);
+        }
+        // in case of a command flight it must run the code in itinerary/main.py
+        Command::Flight(flight) => {
+            let mut command = std::process::Command::new("python3");
+            command.arg("itinerary/main.py").arg(flight);
+            let output = command.output().map_err(|e| {
+                EvalError::Other(format!("Failed to execute flight command: {}", e))
+            })?;
+            if !output.status.success() {
+                return Err(EvalError::Other(format!(
+                    "Flight command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+            println!("Flight command executed successfully.");
+        }
+        Command::Input { cell, file } => {
+            let key = recalculation::cell_to_string(&cell);
+            sheet.set_formula(&key, Expr::Constant(0));
+
+            let mut file = std::fs::File::open(file)
+                .map_err(|e| EvalError::Other(format!("Failed to open file: {}", e)))?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .map_err(|e| EvalError::Other(format!("Failed to read file: {}", e)))?;
+
+            let start_row = (cell.row as usize) - 1;
+            let start_col = (cell.col as usize) - 1;
+            for (row_offset, line) in contents.lines().enumerate() {
+                for (col_offset, word) in line.split_whitespace().enumerate() {
+                    let value = word
+                        .parse::<i32>()
+                        .map_err(|_| EvalError::Other("Invalid number format".into()))?;
+                    sheet
+                        .set(
+                            start_row + row_offset,
+                            start_col + col_offset,
+                            CellValue::Value(value),
+                        )
+                        .map_err(|e| EvalError::Other(e))?;
+                }
+            }
+        }
+        Command::LoopCommands { commands } => {
+            for cmd in commands {
+                evaluate_command(cmd, sheet, output_enabled)?;
+            }
+        }
+        Command::IfElse {
+            condition,
+            then_cmd,
+            else_cmd,
+        } => match &condition {
+            Expr::BinaryOp(left, op, right) => {
+                let left_val = eval_expr(left, sheet)?;
+                let right_val = eval_expr(right, sheet)?;
+
+                let condition_met = match op {
+                    BinaryOp::Add => left_val + right_val != 0,
+                    BinaryOp::Subtract => left_val - right_val != 0,
+                    BinaryOp::Multiply => left_val * right_val != 0,
+                    BinaryOp::Divide => {
+                        if right_val == 0 {
+                            return Err(EvalError::DivByZero);
+                        }
+                        left_val / right_val != 0
+                    }
+                    BinaryOp::BitAnd => left_val & right_val != 0,
+                    BinaryOp::BitOr => left_val | right_val != 0,
+                    BinaryOp::BitXor => left_val ^ right_val != 0,
+                    BinaryOp::LessThan => left_val < right_val,
+                    BinaryOp::GreaterThan => left_val > right_val,
+                    BinaryOp::Equal => left_val == right_val,
+                };
+
+                if condition_met {
+                    evaluate_command(*then_cmd, sheet, output_enabled)?;
+                } else {
+                    evaluate_command(*else_cmd, sheet, output_enabled)?;
+                }
+            }
+            _ => {
+                return Err(EvalError::Other("Invalid condition".into()));
+            }
+        },
+        Command::Bar(expr) => {
+            match expr {
+                Expr::Range(start, end) => {
+                    let start_row = (start.row - 1) as usize;
+                    let end_row = (end.row - 1) as usize;
+                    let start_col = (start.col - 1) as usize;
+                    let end_col = (end.col - 1) as usize;
+
+                    let mut values: Vec<f32> = Vec::new();
+
+                    // Vertical range: exactly one column (e.g., A1:A5)
+                    if end_col - start_col == 0 && end_row >= start_row {
+                        for r in start_row..=end_row {
+                            let v = match sheet.get(r, start_col) {
+                                Some(CellValue::Value(val)) => *val as f32,
+                                Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                None => return Err(EvalError::OutOfBounds),
+                            };
+                            values.push(v);
+                        }
+                    }
+                    // Horizontal range: exactly one row (e.g., A2:D2)
+                    else if end_row - start_row == 0 && end_col >= start_col {
+                        for c in start_col..=end_col {
+                            let v = match sheet.get(start_row, c) {
+                                // Use start_row, not start_row+1
+                                Some(CellValue::Value(val)) => *val as f32,
+                                Some(CellValue::Error(_)) => return Err(EvalError::CellError),
+                                None => return Err(EvalError::OutOfBounds),
+                            };
+                            values.push(v);
+                        }
+                    } else {
+                        return Err(EvalError::Other(
+                            "Bar command requires a range spanning either exactly one column or exactly one row".into()
+                        ));
+                    }
+
+                    if values.len() < 2 {
+                        return Err(EvalError::Other(
+                            "Bar chart needs at least 2 data points".into(),
+                        ));
+                    }
+
+                    for (i, v) in values.iter().enumerate() {
+                        println!("Point {}: {}", i, v);
+                    }
+
+                    generate_bar_chart_1d(&values)?;
+                    println!("Bar chart image generated as 'bar.png'.");
+                    return Ok(());
+                }
+                _ => {
+                    return Err(EvalError::Other(
+                        "Bar command requires a range argument".into(),
+                    ));
+                }
+            }
+        }
+        Command::Gui => (),
         Command::Quit => { /* handled in main */ }
     }
     Ok(())
@@ -303,4 +523,104 @@ fn convert_col_to_name(mut col: u16) -> String {
         col = (col - 1) / 26;
     }
     name
+}
+
+fn generate_plot_image(points: &[(f32, f32)]) -> Result<(), EvalError> {
+    // Determine x and y ranges with some margins:
+    let x_min = points.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min);
+    let x_max = points
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let y_min = points.iter().map(|(_, y)| *y).fold(f32::INFINITY, f32::min);
+    let y_max = points
+        .iter()
+        .map(|&(_, y)| y)
+        .fold(0.0f32, |acc, y| acc.max(y));
+    // Build the output file path using CARGO_MANIFEST_DIR so that plot.png is alongside Cargo.toml.
+    let project_dir = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{}/plot.png", project_dir);
+    // Create a drawing area using BitMapBackend with the new output path.
+    let backend = BitMapBackend::new(&output_path, (640, 480));
+    let root_area = backend.into_drawing_area();
+    // Fill background with white.
+    root_area
+        .fill(&WHITE)
+        .map_err(|e| EvalError::Other(format!("Plotters fill error: {}", e)))?;
+    // Build the chart with axis labels and margins.
+    let mut chart = ChartBuilder::on(&root_area)
+        .caption("Detailed Plot", ("sans-serif", 40))
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(40)
+        .build_cartesian_2d((x_min - 1.0)..(x_max + 1.0), (y_min - 1.0)..(y_max + 1.0))
+        .map_err(|e| EvalError::Other(format!("ChartBuilder error: {}", e)))?;
+    // Configure mesh (axes, grid lines, labels)
+    chart
+        .configure_mesh()
+        .x_desc("X-axis")
+        .y_desc("Y-axis")
+        .draw()
+        .map_err(|e| EvalError::Other(format!("Mesh drawing error: {}", e)))?;
+    // Draw the series as a line in RED.
+    chart
+        .draw_series(LineSeries::new(points.iter().cloned(), &RED))
+        .map_err(|e| EvalError::Other(format!("LineSeries error: {}", e)))?;
+    // Present (flush) the drawing area to file.
+    root_area
+        .present()
+        .map_err(|e| EvalError::Other(format!("Backend present error: {}", e)))?;
+    println!("Plot image successfully generated as '{}'.", output_path);
+    Ok(())
+}
+
+fn generate_bar_chart_1d(values: &[f32]) -> Result<(), EvalError> {
+    let n = values.len();
+    let y_max = values.iter().fold(0.0f32, |acc, &v| acc.max(v));
+
+    let project_dir = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("{}/bar.png", project_dir);
+
+    let backend = BitMapBackend::new(&output_path, (640, 480));
+    let root_area = backend.into_drawing_area();
+    root_area
+        .fill(&WHITE)
+        .map_err(|e| EvalError::Other(format!("Plotters fill error: {}", e)))?;
+
+    // Build a discrete x-axis using the number of values as categories.
+    let mut chart = ChartBuilder::on(&root_area)
+        .caption("Bar Chart", ("sans-serif", 40))
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0..n, 0.0..(y_max * 1.1))
+        .map_err(|e| EvalError::Other(format!("ChartBuilder error: {}", e)))?;
+
+    chart
+        .configure_mesh()
+        .x_desc("Category")
+        .y_desc("Value")
+        .draw()
+        .map_err(|e| EvalError::Other(format!("Mesh drawing error: {}", e)))?;
+
+    // Define a palette of colours.
+    let palette = [RED, BLUE, GREEN, CYAN, MAGENTA, YELLOW];
+
+    // Draw each bar using the index as the category.
+    chart
+        .draw_series(values.iter().enumerate().map(|(i, &v)| {
+            let lower_left = (i, 0.0);
+            let upper_right = (i + 1, v);
+
+            let color = palette[i % palette.len()];
+            Rectangle::new([lower_left, upper_right], color.filled())
+        }))
+        .map_err(|e| EvalError::Other(format!("Bar chart series error: {}", e)))?;
+
+    root_area
+        .present()
+        .map_err(|e| EvalError::Other(format!("Backend present error: {}", e)))?;
+
+    println!("Bar chart generated as '{}'.", output_path);
+    Ok(())
 }

@@ -2,9 +2,9 @@ use crate::sheet::{Color, Condition};
 use nom::{
     IResult,
     branch::alt,
-    bytes::complete::tag,
-    character::complete::{alpha1, digit1, multispace0},
-    combinator::{all_consuming, map, opt, peek},
+    bytes::complete::{tag, tag_no_case, take_till},
+    character::complete::{alpha1, char, digit1, multispace0},
+    combinator::{all_consuming, map, map_res, opt, peek},
     error::{ParseError, VerboseError},
     multi::{fold_many0, separated_list0},
     sequence::{delimited, preceded, tuple},
@@ -21,19 +21,275 @@ fn parse_private(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     Ok((input, Command::Private(cell)))
 }
 
+fn parse_gui(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag_no_case("gui")(input)?;
+    Ok((input, Command::Gui))
+}
+
 pub fn parse_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     all_consuming(alt((
         parse_quit,
+        parse_gui,
         parse_disable_output,
         parse_enable_output,
         parse_scroll_to,
         parse_scroll_single,
         parse_private,
         parse_format_command,
+        parse_looping,
         parse_formula_command,
+        parse_plot,
         parse_clear_format_where_command,
         parse_clear_format_command,
+        parse_if_else_command,
+        parse_input,
+        parse_flight,
+        parse_bar,
+        parse_output,
     )))(input)
+}
+
+pub fn parse_bar(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag("Bar")(input)?;
+    let (input, _) = peek(tag("("))(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, arg) = alt((parse_range, parse_expr))(input)?;
+    let (input, _) = tag(")")(input)?;
+    let expr = match arg {
+        Expr::Range(start, end) => Expr::Range(start, end),
+        _ => {
+            return Err(nom::Err::Failure(VerboseError::from_error_kind(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
+    };
+    Ok((input, Command::Bar(expr)))
+}
+
+pub fn parse_output(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag("Output")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("(")(input)?;
+    // Allow any characters until ')' (and trim whitespace)
+    let (input, file) = map_res(take_till(|c| c == ')'), |s: &str| {
+        Ok::<String, VerboseError<&str>>(s.trim().to_string())
+    })(input)?;
+    let (input, _) = tag(")")(input)?;
+    Ok((input, Command::Output(file)))
+}
+
+pub fn parse_flight(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag("flight")(input)?;
+    let (input, _) = multispace0(input)?;
+    // Consume the outer opening parenthesis.
+    let (input, _) = char('(')(input)?;
+    // Parse the entire itinerary string with nested parentheses.
+    let (input, itinerary_str) = parse_itinerary_string(input)?;
+    // Consume the final closing parenthesis.
+    let (input, _) = char(')')(input)?;
+    Ok((input, Command::Flight(itinerary_str.to_string())))
+}
+
+fn parse_itinerary_string(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
+    let mut depth = 1;
+    for (idx, ch) in input.char_indices() {
+        if ch == '(' {
+            depth += 1;
+        } else if ch == ')' {
+            depth -= 1;
+            if depth == 0 {
+                // Return substring from the start until here (not including this matching ')').
+                return Ok((&input[idx..], &input[..idx]));
+            }
+        }
+    }
+    Err(nom::Err::Error(VerboseError::from_error_kind(
+        input,
+        nom::error::ErrorKind::Tag,
+    )))
+}
+
+fn parse_if_else_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag("if")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Parse the cell reference for the condition
+    let (input, cell) = parse_cell_ref(input)?;
+
+    // Parse the comparison operator and value
+    let (input, op) = alt((tag("<"), tag(">"), tag("=")))(input)?;
+    let (input, value) = parse_integer(input)?;
+
+    // Create condition as an Expr
+    let condition = match op {
+        "<" => Expr::BinaryOp(
+            Box::new(Expr::CellRef(cell)),
+            BinaryOp::LessThan,
+            Box::new(Expr::Constant(value)),
+        ),
+        ">" => Expr::BinaryOp(
+            Box::new(Expr::CellRef(cell)),
+            BinaryOp::GreaterThan,
+            Box::new(Expr::Constant(value)),
+        ),
+        "=" => Expr::BinaryOp(
+            Box::new(Expr::CellRef(cell)),
+            BinaryOp::Equal,
+            Box::new(Expr::Constant(value)),
+        ),
+        _ => unreachable!(),
+    };
+
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("then")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Parse the 'then' branch formula
+    let (input, then_cmd) = parse_formula_command(input)?;
+
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("else")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Parse the 'else' branch formula
+    let (input, else_cmd) = parse_formula_command(input)?;
+
+    Ok((
+        input,
+        Command::IfElse {
+            condition,
+            then_cmd: Box::new(then_cmd),
+            else_cmd: Box::new(else_cmd),
+        },
+    ))
+}
+fn parse_cell_ref_looping(input: &str) -> IResult<&str, u16, VerboseError<&str>> {
+    let (input, col_letters) = alpha1(input)?;
+    // Extract only the column part (without the potential variable)
+    let col_letters = if col_letters.len() > 1 && col_letters.chars().last().unwrap().is_lowercase()
+    {
+        &col_letters[..col_letters.len() - 1]
+    } else {
+        col_letters
+    };
+    let mut col: u16 = 0;
+    for c in col_letters.chars() {
+        if !c.is_ascii_alphabetic() {
+            return Err(nom::Err::Failure(VerboseError::from_error_kind(
+                input,
+                nom::error::ErrorKind::Alpha,
+            )));
+        }
+        col = col * 26 + ((c.to_ascii_uppercase() as u16) - ('A' as u16) + 1);
+    }
+    Ok((input, col))
+}
+fn parse_looping(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    // eg: :i in 1..10: Ai=Bi+1
+    let (input, _) = tag(":")(input)?;
+    let (input, _) = alpha1(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("in")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, start) = parse_integer(input)?;
+    let (input, _) = tag("..")(input)?;
+    let (input, end) = parse_integer(input)?;
+    let (input, _) = tag(":")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Check for the loop variable in the cell reference part
+    let (input, start_col) = parse_cell_ref_looping(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("=")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, end_col) = parse_cell_ref_looping(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, op) = alt((tag("+"), tag("-"), tag("*"), tag("/")))(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, value) = parse_integer(input)?;
+
+    // Generate the list of commands based on the loop range
+    let mut commands = Vec::new();
+    for i in start..=end {
+        // Create the appropriate expression based on the operator
+        let expr = match op {
+            "+" => Expr::BinaryOp(
+                Box::new(Expr::CellRef(CellRef {
+                    col: end_col,
+                    row: i as u16,
+                })),
+                BinaryOp::Add,
+                Box::new(Expr::Constant(value)),
+            ),
+            "-" => Expr::BinaryOp(
+                Box::new(Expr::CellRef(CellRef {
+                    col: end_col,
+                    row: i as u16,
+                })),
+                BinaryOp::Subtract,
+                Box::new(Expr::Constant(value)),
+            ),
+            "*" => Expr::BinaryOp(
+                Box::new(Expr::CellRef(CellRef {
+                    col: end_col,
+                    row: i as u16,
+                })),
+                BinaryOp::Multiply,
+                Box::new(Expr::Constant(value)),
+            ),
+            "/" => Expr::BinaryOp(
+                Box::new(Expr::CellRef(CellRef {
+                    col: end_col,
+                    row: i as u16,
+                })),
+                BinaryOp::Divide,
+                Box::new(Expr::Constant(value)),
+            ),
+            _ => unreachable!(),
+        };
+
+        commands.push(Command::SetCell {
+            cell: CellRef {
+                col: start_col,
+                row: i as u16,
+            },
+            expr: expr.clone(),
+        });
+    }
+    Ok((input, Command::LoopCommands { commands }))
+}
+
+pub fn parse_plot(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag("Plot")(input)?;
+    let (input, _) = peek(tag("("))(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, arg) = alt((parse_range, parse_expr))(input)?;
+    let (input, _) = tag(")")(input)?;
+    let expr = match arg {
+        Expr::Range(start, end) => Expr::Range(start, end),
+        _ => {
+            return Err(nom::Err::Failure(VerboseError::from_error_kind(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
+    };
+    Ok((input, Command::Plot(expr)))
+}
+
+fn parse_input(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+    let (input, _) = tag("Input")(input)?;
+    let (input, _) = peek(tag("("))(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, cell) = parse_cell_ref(input)?;
+    let (input, _) = tag(",")(input)?;
+    // Allow any characters until ')' (and trim whitespace)
+    let (input, file) = map_res(take_till(|c| c == ')'), |s: &str| {
+        Ok::<String, VerboseError<&str>>(s.trim().to_string())
+    })(input)?;
+    let (input, _) = tag(")")(input)?;
+    Ok((input, Command::Input { cell, file }))
 }
 
 fn parse_clear_format_where_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
@@ -166,7 +422,7 @@ fn parse_formula_command(input: &str) -> IResult<&str, Command, VerboseError<&st
 fn parse_cell_ref(input: &str) -> IResult<&str, CellRef, VerboseError<&str>> {
     let (input, col_letters) = alpha1(input)?;
     let (input, row_digits) = digit1(input)?;
-    let mut col: u16 = 0;
+    let mut col: usize = 0;
     for c in col_letters.chars() {
         if !c.is_ascii_alphabetic() {
             return Err(nom::Err::Failure(VerboseError::from_error_kind(
@@ -174,14 +430,30 @@ fn parse_cell_ref(input: &str) -> IResult<&str, CellRef, VerboseError<&str>> {
                 nom::error::ErrorKind::Alpha,
             )));
         }
-        col = col * 26 + ((c.to_ascii_uppercase() as u16) - ('A' as u16) + 1);
+        col = col * 26 + ((c.to_ascii_uppercase() as usize) - ('A' as usize) + 1);
     }
-    let row: u16 = row_digits.parse().map_err(|_| {
+    let row: usize = row_digits.parse().map_err(|_| {
         nom::Err::Failure(VerboseError::from_error_kind(
             input,
             nom::error::ErrorKind::Digit,
         ))
     })?;
+    if col > 65535 || row > 65535 {
+
+        return Err(nom::Err::Failure(VerboseError::from_error_kind(
+
+            input,
+
+            nom::error::ErrorKind::Verify,
+
+        )));
+
+    }
+
+    let col = col as u16;
+
+    let row = row as u16;
+
     Ok((input, CellRef { col, row }))
 }
 

@@ -1,11 +1,19 @@
 use crate::sheet::{Color, Condition};
 #[derive(Debug, Clone)]
 pub enum Command {
-    SetCell { cell: CellRef, expr: Expr },
+    SetCell {
+        cell: CellRef,
+        expr: Expr,
+    },
     ScrollTo(CellRef),
-    Format { condition: Condition, color: Color },
+    Format {
+        condition: Condition,
+        color: Color,
+    },
     ClearFormat,
-    ClearFormatWhere { condition: Condition },
+    ClearFormatWhere {
+        condition: Condition,
+    },
     ScrollUp,
     ScrollDown,
     ScrollLeft,
@@ -13,6 +21,23 @@ pub enum Command {
     DisableOutput,
     EnableOutput,
     Private(CellRef),
+    LoopCommands {
+        commands: Vec<Command>,
+    },
+    IfElse {
+        condition: Expr,
+        then_cmd: Box<Command>,
+        else_cmd: Box<Command>,
+    },
+    Plot(Expr),
+    Input {
+        cell: CellRef,
+        file: String,
+    },
+    Gui,
+    Flight(String),
+    Bar(Expr),
+    Output(String),
     Quit,
 }
 
@@ -40,6 +65,9 @@ pub enum BinaryOp {
     BitAnd,
     BitXor,
     BitOr,
+    Equal,
+    GreaterThan,
+    LessThan,
 }
 
 #[derive(Debug, Clone)]

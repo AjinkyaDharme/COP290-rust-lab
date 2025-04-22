@@ -129,6 +129,188 @@ impl RecalcManager {
                 }
             }
         }
+
+        if let Command::LoopCommands { commands } = cmd {
+            let mut all_cells_to_recalc = HashSet::new();
+
+            // First pass: update dependency graph for each command
+            for command in commands {
+                if let Command::SetCell { cell, expr } = command {
+                    let cell_key = cell_to_string(cell);
+
+                    // Extract references from expression
+                    let mut new_refs = HashSet::new();
+                    extract_cell_refs(expr, &mut new_refs);
+                    let mut new_range_refs = HashSet::new();
+                    extract_range_refs(expr, &mut new_range_refs);
+
+                    // Get old references
+                    let old_refs = self.parents.get(&cell_key).cloned().unwrap_or_default();
+                    let old_range_refs = self
+                        .range_parents
+                        .get(&cell_key)
+                        .cloned()
+                        .unwrap_or_default();
+
+                    // Calculate differences
+                    let removed = old_refs
+                        .difference(&new_refs)
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    let added = new_refs
+                        .difference(&old_refs)
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    let removed_range = old_range_refs
+                        .difference(&new_range_refs)
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    let added_range = new_range_refs
+                        .difference(&old_range_refs)
+                        .cloned()
+                        .collect::<HashSet<_>>();
+
+                    // Update dependency graphs
+                    self.parents.insert(cell_key.clone(), new_refs.clone());
+                    self.range_parents
+                        .insert(cell_key.clone(), new_range_refs.clone());
+
+                    // Update children map
+                    for dep in &removed {
+                        if let Some(child_set) = self.children.get_mut(dep) {
+                            child_set.remove(&cell_key);
+                        }
+                    }
+                    for dep in &added {
+                        self.children
+                            .entry(dep.clone())
+                            .or_default()
+                            .insert(cell_key.clone());
+                    }
+
+                    // Update range children
+                    self.range_children.retain(|(range, child)| {
+                        !(child == &cell_key && removed_range.contains(range))
+                    });
+                    for range in &added_range {
+                        self.range_children.push((range.clone(), cell_key.clone()));
+                    }
+
+                    all_cells_to_recalc.insert(cell_key);
+                }
+            }
+
+            // Generate topological sort
+            let mut result = Vec::new();
+            for cell in all_cells_to_recalc {
+                match self.topological_sort_excluding(&cell) {
+                    Ok(order) => {
+                        for cell in order {
+                            if !result.contains(&cell) {
+                                result.push(cell);
+                            }
+                        }
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            return Ok(result);
+        }
+        if let Command::Private(cell) = cmd {
+            let cell_key = cell_to_string(cell);
+
+            // Clear all dependencies for this cell
+            let old_refs = self.parents.get(&cell_key).cloned().unwrap_or_default();
+            let old_range_refs = self
+                .range_parents
+                .get(&cell_key)
+                .cloned()
+                .unwrap_or_default();
+            // Remove this cell from the children of its parents
+            for dep in &old_refs {
+                if let Some(child_set) = self.children.get_mut(dep) {
+                    child_set.remove(&cell_key);
+                }
+            }
+
+            // Remove range dependencies
+            self.range_children
+                .retain(|(range, child)| !(child == &cell_key && old_range_refs.contains(range)));
+
+            // Clear parent lists for this cell
+            self.parents.insert(cell_key.clone(), HashSet::new());
+            self.range_parents.insert(cell_key.clone(), HashSet::new());
+
+            return self.topological_sort_excluding(&cell_key);
+        }
+        if let Command::IfElse { condition, .. } = cmd {
+            let mut all_cells_to_recalc = HashSet::new();
+
+            // Create a pseudo cell key for the IfElse condition
+            let cell_key = String::from("_IF_CONDITION_");
+
+            // Update dependency graph for the condition
+            let mut new_refs = HashSet::new();
+            extract_cell_refs(condition, &mut new_refs);
+            let mut new_range_refs = HashSet::new();
+            extract_range_refs(condition, &mut new_range_refs);
+
+            // Get old references
+            let old_refs = self.parents.get(&cell_key).cloned().unwrap_or_default();
+            let old_range_refs = self
+                .range_parents
+                .get(&cell_key)
+                .cloned()
+                .unwrap_or_default();
+
+            // Calculate differences
+            let removed = old_refs
+                .difference(&new_refs)
+                .cloned()
+                .collect::<HashSet<_>>();
+            let added = new_refs
+                .difference(&old_refs)
+                .cloned()
+                .collect::<HashSet<_>>();
+            let removed_range = old_range_refs
+                .difference(&new_range_refs)
+                .cloned()
+                .collect::<HashSet<_>>();
+            let added_range = new_range_refs
+                .difference(&old_range_refs)
+                .cloned()
+                .collect::<HashSet<_>>();
+
+            // Update dependency graphs
+            self.parents.insert(cell_key.clone(), new_refs.clone());
+            self.range_parents
+                .insert(cell_key.clone(), new_range_refs.clone());
+
+            // Update children map
+            for dep in &removed {
+                if let Some(child_set) = self.children.get_mut(dep) {
+                    child_set.remove(&cell_key);
+                }
+            }
+            for dep in &added {
+                self.children
+                    .entry(dep.clone())
+                    .or_default()
+                    .insert(cell_key.clone());
+            }
+
+            // Update range children
+            self.range_children
+                .retain(|(range, child)| !(child == &cell_key && removed_range.contains(range)));
+            for range in &added_range {
+                self.range_children.push((range.clone(), cell_key.clone()));
+            }
+
+            all_cells_to_recalc.insert(cell_key);
+
+            // Process then_cmd and else_cmd similarly to above...
+        }
         Ok(Vec::new())
     }
 
@@ -188,7 +370,7 @@ impl RecalcManager {
                     cycle.push(current.clone()); // Complete the cycle
 
                     // Format as A1->A3->A5->A1
-                    let cycle_str = cycle.join("->");
+                    let cycle_str: String = cycle.join("->");
                     println!("Cycle detected: {}", cycle_str);
                     return Err(format!("Cycle detected: {}", cycle_str));
                 }
@@ -212,10 +394,18 @@ impl RecalcManager {
     }
 }
 
-pub fn recalculate(sheet: &mut Spreadsheet, topo_order: Vec<String>) {
+pub fn recalculate(
+    sheet: &mut Spreadsheet,
+    topo_order: Vec<String>,
+    debug: bool,
+) -> Option<Vec<String>> {
+    let mut debug_updates = Vec::<String>::new();
     for cell_key in topo_order {
         if let Some(expr) = sheet.get_formula(&cell_key) {
             let result = eval_expr(expr, sheet);
+            if debug {
+                debug_updates.push(format!("{}: {:?}", cell_key, result));
+            }
             match result {
                 Ok(val) => {
                     if let Err(e) = sheet.set_by_key(&cell_key, CellValue::Value(val)) {
@@ -230,6 +420,7 @@ pub fn recalculate(sheet: &mut Spreadsheet, topo_order: Vec<String>) {
             }
         }
     }
+    if debug { Some(debug_updates) } else { None }
 }
 
 pub fn extract_cell_refs(expr: &Expr, refs: &mut HashSet<String>) {
