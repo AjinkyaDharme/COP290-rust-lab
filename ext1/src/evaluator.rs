@@ -538,8 +538,8 @@ fn generate_plot_image(points: &[(f32, f32)]) -> Result<(), EvalError> {
         .map(|&(_, y)| y)
         .fold(0.0f32, |acc, y| acc.max(y));
     // Build the output file path using CARGO_MANIFEST_DIR so that plot.png is alongside Cargo.toml.
-    let project_dir = env!("CARGO_MANIFEST_DIR");
-    let output_path = format!("{}/plot.png", project_dir);
+    //let project_dir = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("plot.png");
     // Create a drawing area using BitMapBackend with the new output path.
     let backend = BitMapBackend::new(&output_path, (640, 480));
     let root_area = backend.into_drawing_area();
@@ -578,8 +578,8 @@ fn generate_bar_chart_1d(values: &[f32]) -> Result<(), EvalError> {
     let n = values.len();
     let y_max = values.iter().fold(0.0f32, |acc, &v| acc.max(v));
 
-    let project_dir = env!("CARGO_MANIFEST_DIR");
-    let output_path = format!("{}/bar.png", project_dir);
+   // let project_dir = env!("CARGO_MANIFEST_DIR");
+    let output_path = format!("bar.png");
 
     let backend = BitMapBackend::new(&output_path, (640, 480));
     let root_area = backend.into_drawing_area();
