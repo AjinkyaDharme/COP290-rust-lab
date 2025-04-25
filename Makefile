@@ -20,6 +20,9 @@ coverage:
 
 docs:
 	cargo rustdoc
+	pdflatex report.tex
+	pdflatex report.tex
+
 	
 
 # Extension: build & run

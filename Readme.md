@@ -6,11 +6,19 @@ A command-line spreadsheet application written in Rust that also supports gui
 ```bash
 git clone {repo_link}
 cd COP290-rust-lab
+
+# Update package lists
 sudo apt-get update
-sudo apt-get install -y pkg-config libfontconfig1-dev libasound2-dev
+
+# Install dependencies one by one
+sudo apt-get install -y pkg-config
+sudo apt-get install -y libfontconfig1-dev
+sudo apt-get install -y libasound2-dev
 ```
+
 ## Directory structure
 ```
+
 ext1/
 src/
 ├── command.rs     # Command handling
@@ -35,7 +43,7 @@ make
 
 2. Run the project:
 ```bash
-cargo run
+make run
 ```
 
 ## Testing
@@ -53,7 +61,7 @@ Run the extension directly using:
 ```bash
 make ext1
 ```
-After the extension has started running to open the gui type 'gui' as the command, it will open a gui displaying the spreadsheet. To close the gui and end type 'q' to end the process and exit.
+After the extension has started running to open the gui type 'gui' as the command, it will open a gui displaying the spreadsheet. To close the gui and end type 'q' to end the process and exit.Here by default it creates 20*10 size spreadhsheet so that it is easy to view and operate. You can change the dimensions by changing ext1 part of Makefile
 
 
 ## Contributors
