@@ -49,7 +49,7 @@ pub fn parse_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> 
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and `Command::Quit`, or an error
-fn parse_quit(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+pub fn parse_quit(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     map(tag("q"), |_| Command::Quit)(input)
 }
 
@@ -60,7 +60,7 @@ fn parse_quit(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and `Command::DisableOutput`, or an error
-fn parse_disable_output(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+pub fn parse_disable_output(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     map(tag("disable_output"), |_| Command::DisableOutput)(input)
 }
 
@@ -71,7 +71,7 @@ fn parse_disable_output(input: &str) -> IResult<&str, Command, VerboseError<&str
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and `Command::EnableOutput`, or an error
-fn parse_enable_output(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+pub fn parse_enable_output(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     map(tag("enable_output"), |_| Command::EnableOutput)(input)
 }
 
@@ -82,7 +82,7 @@ fn parse_enable_output(input: &str) -> IResult<&str, Command, VerboseError<&str>
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and `Command::ScrollTo`, or an error
-fn parse_scroll_to(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+pub fn parse_scroll_to(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     let (input, _) = tag("scroll_to")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, cell) = parse_cell_ref(input)?;
@@ -102,7 +102,7 @@ fn parse_scroll_to(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
 /// * "a" -> `Command::ScrollLeft`
 /// * "s" -> `Command::ScrollDown`
 /// * "d" -> `Command::ScrollRight`
-fn parse_scroll_single(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+pub fn parse_scroll_single(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     let (input, cmd) = alt((tag("w"), tag("a"), tag("s"), tag("d")))(input)?;
     let command = match cmd {
         "w" => Command::ScrollUp,
@@ -121,7 +121,7 @@ fn parse_scroll_single(input: &str) -> IResult<&str, Command, VerboseError<&str>
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and a `Command::SetCell`, or an error
-fn parse_formula_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
+pub fn parse_formula_command(input: &str) -> IResult<&str, Command, VerboseError<&str>> {
     let (input, cell) = parse_cell_ref(input)?;
     let (input, _) = tag("=")(input)?;
     let (input, expr) = parse_expr(input)?;
@@ -142,7 +142,7 @@ fn parse_formula_command(input: &str) -> IResult<&str, Command, VerboseError<&st
 ///
 /// # Errors
 /// Returns an error if the column or row is invalid or exceeds u16 bounds.
-fn parse_cell_ref(input: &str) -> IResult<&str, CellRef, VerboseError<&str>> {
+pub fn parse_cell_ref(input: &str) -> IResult<&str, CellRef, VerboseError<&str>> {
     let (input, col_letters) = alpha1(input)?;
     let (input, row_digits) = digit1(input)?;
 
@@ -182,7 +182,7 @@ fn parse_cell_ref(input: &str) -> IResult<&str, CellRef, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and an `Expr`, or an error
-fn parse_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     parse_add_sub(input)
 }
 
@@ -195,7 +195,7 @@ fn parse_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and an `Expr`, or an error
-fn parse_add_sub(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_add_sub(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     let (input, init) = parse_mul_div(input)?;
     fold_many0(
         preceded(
@@ -223,7 +223,7 @@ fn parse_add_sub(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and an `Expr`, or an error
-fn parse_mul_div(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_mul_div(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     let (input, init) = parse_factor(input)?;
     fold_many0(
         preceded(
@@ -249,7 +249,7 @@ fn parse_mul_div(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and an `Expr`, or an error
-fn parse_factor(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_factor(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     preceded(
         multispace0,
         alt((
@@ -268,7 +268,7 @@ fn parse_factor(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and an `Expr`, or an error
-fn parse_parenthesized_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_parenthesized_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     delimited(tag("("), parse_expr, tag(")"))(input)
 }
 
@@ -287,7 +287,7 @@ fn parse_parenthesized_expr(input: &str) -> IResult<&str, Expr, VerboseError<&st
 /// - SUM: Sum of values in a range
 /// - STDEV: Standard deviation of values in a range
 /// - SLEEP: Pause execution for specified seconds
-fn parse_function_call(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_function_call(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     let (input, func_name) = alpha1(input)?;
     let (input, _) = peek(tag("("))(input)?;
     let (input, _) = tag("(")(input)?;
@@ -317,7 +317,7 @@ fn parse_function_call(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and a constant `Expr`, or an error
-fn parse_constant(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_constant(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     let (input, sign) = opt(tag("-"))(input)?;
     let (input, digit_str) = digit1(input)?;
     let number = digit_str.parse::<i32>().map_err(|_| {
@@ -337,7 +337,7 @@ fn parse_constant(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and a cell reference `Expr`, or an error
-fn parse_cell_ref_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_cell_ref_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     map(parse_cell_ref, Expr::CellRef)(input)
 }
 
@@ -348,7 +348,7 @@ fn parse_cell_ref_expr(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
 ///
 /// # Returns
 /// * A nom `IResult` containing either the remaining input and a range `Expr`, or an error
-fn parse_range(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
+pub fn parse_range(input: &str) -> IResult<&str, Expr, VerboseError<&str>> {
     let (input, start) = parse_cell_ref(input)?;
     let (input, _) = tag(":")(input)?;
     let (input, end) = parse_cell_ref(input)?;
