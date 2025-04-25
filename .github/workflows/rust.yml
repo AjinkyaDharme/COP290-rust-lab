@@ -45,7 +45,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev 
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libasound2-dev
+      - name: Set PKG_CONFIG_PATH
+        run: echo "PKG_CONFIG_PATH=/usr/lib/pkgconfig" >> $GITHUB_ENV 
       - name: Build ext1 project
         run: cargo build --release --manifest-path ext1/Cargo.toml
       - name: Run ext1 binary
