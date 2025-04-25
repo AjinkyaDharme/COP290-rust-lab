@@ -6,6 +6,8 @@ A command-line spreadsheet application written in Rust that also supports gui
 ```bash
 git clone {repo_link}
 cd COP290-rust-lab
+sudo apt-get update
+sudo apt-get install -y pkg-config libfontconfig1-dev libasound2-dev
 ```
 ## Directory structure
 ```
