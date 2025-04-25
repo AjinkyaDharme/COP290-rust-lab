@@ -52,5 +52,3 @@ jobs:
         run: echo "PKG_CONFIG_PATH=/usr/lib/pkgconfig" >> $GITHUB_ENV 
       - name: Build ext1 project
         run: cargo build --release --manifest-path ext1/Cargo.toml
-      - name: Run ext1 binary
-        run: ./ext1/target/release/spreadsheet 999 18278
