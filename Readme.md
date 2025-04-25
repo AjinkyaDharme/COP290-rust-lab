@@ -9,7 +9,6 @@ cd COP290-rust-lab
 ```
 ## Directory structure
 ```
-├── 
 ext1/
 src/
 ├── command.rs     # Command handling
